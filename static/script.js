@@ -8,8 +8,14 @@ const youtubeUrl = $("#youtubeUrl");
 const btnExtract = $("#btnExtract");
 const btnClear = $("#btnClear");
 const btnRetry = $("#btnRetry");
-const btnSaveSheets = $("#btnSaveSheets");
+const btnSaveExcel = $("#btnSaveExcel");
+const btnSaveEnglishUrdu = $("#btnSaveEnglishUrdu");
 const btnDownloadCsv = $("#btnDownloadCsv");
+const btnDownloadCsvEnUr = $("#btnDownloadCsvEnUr");
+const chatForm = $("#chatForm");
+const chatInput = $("#chatInput");
+const chatMessages = $("#chatMessages");
+const btnChatSend = $("#btnChatSend");
 const searchInput = $("#searchInput");
 const progressSection = $("#progressSection");
 const errorSection = $("#errorSection");
@@ -46,7 +52,10 @@ youtubeUrl.addEventListener("keydown", (e) => {
 btnExtract.addEventListener("click", async () => {
   const url = youtubeUrl.value.trim();
   if (!url) { youtubeUrl.focus(); return; }
-  if (!isValidYouTubeUrl(url)) { showError("Please enter a valid YouTube URL."); return; }
+  if (!isPlausibleHttpUrl(url)) {
+    showError("Paste a full link from your browser (https://…). Search redirects like Bing are OK — we resolve them on the server.");
+    return;
+  }
 
   setLoading(true);
   showProgress();
@@ -91,14 +100,14 @@ btnRetry.addEventListener("click", () => {
   youtubeUrl.focus();
 });
 
-// ─── Save to Google Sheets ───────────────────────
-btnSaveSheets.addEventListener("click", async () => {
+// ─── Save to Excel ───────────────────────
+btnSaveExcel.addEventListener("click", async () => {
   if (!currentData) return;
-  btnSaveSheets.disabled = true;
-  btnSaveSheets.textContent = "Saving...";
+  btnSaveExcel.disabled = true;
+  btnSaveExcel.textContent = "Saving...";
 
   try {
-    const response = await fetch("/api/save-to-sheets", {
+    const response = await fetch("/api/save-to-excel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ vocabulary_data: currentData }),
@@ -112,14 +121,46 @@ btnSaveSheets.addEventListener("click", async () => {
     const result = await response.json();
     showToast(
       "✅",
-      "Saved to Google Sheets!",
+      "Saved to Excel!",
       `${result.saved} words saved, ${result.skipped} duplicates skipped.`
     );
   } catch (err) {
     showToast("❌", "Save Failed", err.message);
   } finally {
-    btnSaveSheets.disabled = false;
-    btnSaveSheets.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Save to Google Sheets`;
+    btnSaveExcel.disabled = false;
+    btnSaveExcel.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Save to Excel`;
+  }
+});
+
+btnSaveEnglishUrdu.addEventListener("click", async () => {
+  if (!currentData) return;
+  btnSaveEnglishUrdu.disabled = true;
+  const label = btnSaveEnglishUrdu.innerHTML;
+  btnSaveEnglishUrdu.textContent = "Saving...";
+
+  try {
+    const response = await fetch("/api/save-english-urdu", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vocabulary_data: currentData }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.detail || "Failed to save");
+    }
+
+    const result = await response.json();
+    showToast(
+      "✅",
+      "English + Urdu saved",
+      `${result.saved} rows → sheet “${result.sheet}” in ${result.file}. ${result.skipped} duplicates skipped.`
+    );
+  } catch (err) {
+    showToast("❌", "Save Failed", err.message);
+  } finally {
+    btnSaveEnglishUrdu.disabled = false;
+    btnSaveEnglishUrdu.innerHTML = label;
   }
 });
 
@@ -142,6 +183,60 @@ btnDownloadCsv.addEventListener("click", () => {
   link.href = URL.createObjectURL(blob);
   link.download = `vocabulary_${currentData.movie_title || "export"}.csv`;
   link.click();
+});
+
+btnDownloadCsvEnUr.addEventListener("click", () => {
+  if (!currentData || !currentData.vocabulary) return;
+  const headers = ["English Word", "Urdu Meaning"];
+  const rows = currentData.vocabulary.map((v) => [v.word, v.urdu_meaning]);
+
+  let csv = "\uFEFF" + headers.join(",") + "\n";
+  rows.forEach((row) => {
+    csv += row.map((cell) => `"${(cell || "").replace(/"/g, '""')}"`).join(",") + "\n";
+  });
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  const safe = (currentData.movie_title || "export").replace(/[/\\?%*:|"<>]/g, "-");
+  link.download = `english_urdu_${safe}.csv`;
+  link.click();
+});
+
+// ─── Video chat (transcript-backed) ──────────────
+chatForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sid = currentData?.chat_session_id;
+  const text = chatInput.value.trim();
+  if (!sid || !text) {
+    if (!sid) showToast("⚠️", "Chat unavailable", "Extract vocabulary again to start a new chat session.");
+    return;
+  }
+
+  appendChatBubble("user", text);
+  chatInput.value = "";
+  btnChatSend.disabled = true;
+
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_session_id: sid, message: text }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || "Chat request failed");
+    }
+
+    const { reply } = await response.json();
+    appendChatBubble("assistant", reply || "(No reply)");
+  } catch (err) {
+    appendChatBubble("assistant", `Sorry — ${err.message}`);
+  } finally {
+    btnChatSend.disabled = false;
+    chatInput.focus();
+  }
 });
 
 // ─── Filters ─────────────────────────────────────
@@ -185,6 +280,8 @@ function renderResults(data) {
   $("#metaLanguage").textContent = `Language: ${data.transcript_language || "en"}`;
   $("#metaTranscriptLen").textContent = `${data.transcript_length || 0} word transcript`;
 
+  resetChatUI();
+
   const tbody = $("#vocabBody");
   tbody.innerHTML = "";
 
@@ -207,9 +304,34 @@ function renderResults(data) {
   });
 }
 
+function resetChatUI() {
+  chatMessages.innerHTML = "";
+  const ph = document.createElement("p");
+  ph.className = "chat-placeholder";
+  ph.textContent = "Ask what happened in the video, what a line means, or anything else covered in the transcript.";
+  chatMessages.appendChild(ph);
+  chatInput.value = "";
+}
+
+function appendChatBubble(role, text) {
+  const ph = chatMessages.querySelector(".chat-placeholder");
+  if (ph) ph.remove();
+
+  const div = document.createElement("div");
+  div.className = `chat-msg ${role === "user" ? "user" : "assistant"}`;
+  div.textContent = text;
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
 // ─── Helpers ─────────────────────────────────────
-function isValidYouTubeUrl(url) {
-  return /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)/.test(url);
+function isPlausibleHttpUrl(url) {
+  try {
+    const u = new URL(url.trim());
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function setLoading(on) {

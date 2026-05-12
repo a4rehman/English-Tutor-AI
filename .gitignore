@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 .env
 credentials/*.json
+*.xlsx
+_tmp_pkg/
+node_modules/
+.DS_Store
