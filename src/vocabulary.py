@@ -12,7 +12,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def get_client(api_key: str = None) -> OpenAI:
+    key = api_key or os.getenv("OPENAI_API_KEY")
+    if not key:
+        raise ValueError("OpenAI API key is missing. Please set OPENAI_API_KEY.")
+    return OpenAI(api_key=key)
 
 SYSTEM_PROMPT = """You are an English Vocabulary Extraction Assistant.
 
@@ -65,13 +70,14 @@ IMPORTANT: Return your response as a valid JSON object with this exact structure
 Return ONLY the JSON object, no markdown formatting, no code blocks, no extra text."""
 
 
-def extract_vocabulary(transcript_text: str, video_title: str = None) -> dict:
+def extract_vocabulary(transcript_text: str, video_title: str = None, api_key: str = None) -> dict:
     """
     Send transcript to OpenAI and extract structured vocabulary.
 
     Args:
         transcript_text: The full transcript text from YouTube
         video_title: Optional video title hint
+        api_key: Optional OpenAI API key
 
     Returns:
         A dict with movie_title and vocabulary list
@@ -90,6 +96,7 @@ def extract_vocabulary(transcript_text: str, video_title: str = None) -> dict:
             user_message += f' titled "{video_title}"'
         user_message += f":\n\n{transcript_text}"
 
+    client = get_client(api_key)
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
